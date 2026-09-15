@@ -1,0 +1,824 @@
+---
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r}
+
+library(lme4)
+library(jtools)
+library(interactions)
+library(effectsize)
+library(effects)
+library(emmeans)
+
+```
+
+
+# Data Loading and Preprocessing
+
+```{r}
+
+df = read.csv("./study_data_final.csv")
+df = df[3:nrow(df), ]
+head(df)
+
+```
+
+```{r}
+
+df_prolific = read.csv("./prolific_participant_ids.csv")
+approved_ids = df_prolific[df_prolific$Status == "APPROVED", "Participant.id"]
+length(approved_ids)
+
+```
+
+```{r}
+
+# Define columns to keep
+colnames_to_keep = c(
+  "Duration..in.seconds.", "Finished", "prolific_ID", "consent",
+  "abortion_att_binary", "abortion_att_pre_1", "abortion_att_pre_2",
+  "abortion_att_pre_3", "abortion_certain", "abortion_imp",
+  "vaccine_att_binary", "vaccine_att_pre_1", "vaccine_att_pre_2",
+  "vaccine_att_pre_3", "vaccine_certain", "vaccine_imp",
+  "uh_att_binary", "uh_att_pre_1", "uh_att_pre_2", "uh_att_pre_3",
+  "uh_certain", "uh_imp", "firearm_att_binary", "firearm_att_pre_1",
+  "firearm_att_pre_2", "firearm_att_pre_3", "firearm_certain",
+  "firearm_imp", "abortion_init_resp", "abortion_att_post_1",
+  "abortion_att_post_2", "abortion_att_post_3", "perc_ai_strength",
+  "perc_ai_bias", "vaccine_init_resp", "vaccine_att_post_1",
+  "vaccine_att_post_2", "vaccine_att_post_3", "uh_init_resp",
+  "uh_att_post_1", "uh_att_post_2", "uh_att_post_3", "firearm_init_resp",
+  "firearm_att_post_1", "firearm_att_post_2", "firearm_att_post_3",
+  "perc_useful", "perc_satisfaction", "ai_disable", "abortion_final_resp",
+  "vaccine_final_resp", "uh_final_resp", "firearm_final_resp",
+  "age", "gender", "education", "race", "partisanship",
+  "abortion_pro_1_clicked", "vaccine_pro_1_clicked", "unihealthcare_pro_1_clicked",
+  "gun_pro_1_clicked", "abortion_pro_2_clicked", "abortion_pro_3_clicked",
+  "abortion_pro_4_clicked", "abortion_pro_5_clicked", "abortion_con_2_clicked",
+  "abortion_con_1_clicked", "abortion_con_3_clicked", "abortion_con_4_clicked",
+  "abortion_con_5_clicked", "vaccine_pro_2_clicked", "vaccine_pro_3_clicked",
+  "vaccine_pro_4_clicked", "vaccine_pro_5_clicked", "vaccine_con_2_clicked",
+  "vaccine_con_3_clicked", "vaccine_con_4_clicked", "vaccine_con_5_clicked",
+  "unihealthcare_pro_5_clicked", "unihealthcare_pro_2_clicked",
+  "unihealthcare_pro_3_clicked", "unihealthcare_pro_4_clicked",
+  "unihealthcare_con_2_clicked", "unihealthcare_con_3_clicked",
+  "unihealthcare_con_4_clicked", "unihealthcare_con_5_clicked",
+  "gun_pro_2_clicked", "gun_pro_3_clicked", "gun_pro_4_clicked",
+  "gun_pro_5_clicked", "gun_con_2_clicked", "gun_con_3_clicked",
+  "gun_con_4_clicked", "gun_con_5_clicked", "vaccine_con_1_clicked",
+  "unihealthcare_con_1_clicked", "gun_con_1_clicked", "abortion_pro_First.Click",
+  "abortion_pro_Last.Click", "abortion_anti_First.Click", "abortion_anti_Last.Click",
+  "abortion_control_First.Click", "abortion_control_Last.Click", "vaccine_pro_First.Click",
+  "vaccine_pro_Last.Click", "vaccine_con_First.Click", "vaccine_con_Last.Click",
+  "vaccine_control_First.Click", "vaccine_control_Last.Click", "uh_pro_First.Click",
+  "uh_pro_Last.Click", "uh_con_First.Click", "uh_con_Last.Click",
+  "uh_control_First.Click", "uh_control_Last.Click", "firearm_pro_First.Click",
+  "firearm_pro_Last.Click", "firearm_con_First.Click", "firearm_con_Last.Click",
+  "firearm_control_First.Click", "firearm_control_Last.Click", "study_condition"
+)
+
+
+# Create subset of dataframe with only the columns we want
+df = df[, colnames_to_keep]
+
+names(df)[names(df) == "Duration..in.seconds."] = "study_duration"
+names(df)[names(df) == "Finished"] = "finished"
+
+# Filter to only keep rows where consent = 1 and finished = 1
+df = df[df$consent == 1 & df$finished == 1 & df$prolific_ID %in% approved_ids, ]
+
+# Check the dimensions of the filtered subset
+dim(df)
+
+```
+
+```{r}
+
+# Convert attitude columns to numeric first
+attitude_cols = c("abortion_att_pre_1", "abortion_att_pre_2", "abortion_att_pre_3",
+                  "vaccine_att_pre_1", "vaccine_att_pre_2", "vaccine_att_pre_3",
+                  "uh_att_pre_1", "uh_att_pre_2", "uh_att_pre_3",
+                  "firearm_att_pre_1", "firearm_att_pre_2", "firearm_att_pre_3",
+                  "abortion_att_post_1", "abortion_att_post_2", "abortion_att_post_3",
+                  "vaccine_att_post_1", "vaccine_att_post_2", "vaccine_att_post_3",
+                  "uh_att_post_1", "uh_att_post_2", "uh_att_post_3",
+                  "firearm_att_post_1", "firearm_att_post_2", "firearm_att_post_3")
+
+df[attitude_cols] = lapply(df[attitude_cols], as.numeric)
+
+# Create composite pre-attitude scores by averaging the three items for each topic
+df$abortion_att_pre = rowMeans(df[, c("abortion_att_pre_1", "abortion_att_pre_2", "abortion_att_pre_3")], na.rm = TRUE)
+df$vaccine_att_pre = rowMeans(df[, c("vaccine_att_pre_1", "vaccine_att_pre_2", "vaccine_att_pre_3")], na.rm = TRUE)
+df$uh_att_pre = rowMeans(df[, c("uh_att_pre_1", "uh_att_pre_2", "uh_att_pre_3")], na.rm = TRUE)
+df$firearm_att_pre = rowMeans(df[, c("firearm_att_pre_1", "firearm_att_pre_2", "firearm_att_pre_3")], na.rm = TRUE)
+
+# Create composite post-attitude scores by averaging the three items for each topic
+df$abortion_att_post = rowMeans(df[, c("abortion_att_post_1", "abortion_att_post_2", "abortion_att_post_3")], na.rm = TRUE)
+df$vaccine_att_post = rowMeans(df[, c("vaccine_att_post_1", "vaccine_att_post_2", "vaccine_att_post_3")], na.rm = TRUE)
+df$uh_att_post = rowMeans(df[, c("uh_att_post_1", "uh_att_post_2", "uh_att_post_3")], na.rm = TRUE)
+df$firearm_att_post = rowMeans(df[, c("firearm_att_post_1", "firearm_att_post_2", "firearm_att_post_3")], na.rm = TRUE)
+
+```
+
+```{r}
+
+# Create treatment condition variable
+df$treatment_condition = NA
+
+# For abortion conditions
+df$treatment_condition[df$study_condition == "abortion_pro" & df$abortion_att_binary == 1] = "AC_AI_Summary"
+df$treatment_condition[df$study_condition == "abortion_pro" & df$abortion_att_binary == 2] = "AIC_AI_Summary"
+df$treatment_condition[df$study_condition == "abortion_anti" & df$abortion_att_binary == 1] = "AIC_AI_Summary"
+df$treatment_condition[df$study_condition == "abortion_anti" & df$abortion_att_binary == 2] = "AC_AI_Summary"
+df$treatment_condition[df$study_condition == "abortion_control"] = "Control"
+
+# For vaccine conditions
+df$treatment_condition[df$study_condition == "vaccine_pro" & df$vaccine_att_binary == 1] = "AC_AI_Summary"
+df$treatment_condition[df$study_condition == "vaccine_pro" & df$vaccine_att_binary == 2] = "AIC_AI_Summary"
+df$treatment_condition[df$study_condition == "vaccine_anti" & df$vaccine_att_binary == 1] = "AIC_AI_Summary"
+df$treatment_condition[df$study_condition == "vaccine_anti" & df$vaccine_att_binary == 2] = "AC_AI_Summary"
+df$treatment_condition[df$study_condition == "vaccine_control"] = "Control"
+
+# For universal healthcare (uh) conditions
+df$treatment_condition[df$study_condition == "uh_pro" & df$uh_att_binary == 1] = "AC_AI_Summary"
+df$treatment_condition[df$study_condition == "uh_pro" & df$uh_att_binary == 2] = "AIC_AI_Summary"
+df$treatment_condition[df$study_condition == "uh_anti" & df$uh_att_binary == 1] = "AIC_AI_Summary"
+df$treatment_condition[df$study_condition == "uh_anti" & df$uh_att_binary == 2] = "AC_AI_Summary"
+df$treatment_condition[df$study_condition == "uh_control"] = "Control"
+
+# For firearm conditions
+df$treatment_condition[df$study_condition == "firearm_pro" & df$firearm_att_binary == 1] = "AC_AI_Summary"
+df$treatment_condition[df$study_condition == "firearm_pro" & df$firearm_att_binary == 2] = "AIC_AI_Summary"
+df$treatment_condition[df$study_condition == "firearm_anti" & df$firearm_att_binary == 1] = "AIC_AI_Summary"
+df$treatment_condition[df$study_condition == "firearm_anti" & df$firearm_att_binary == 2] = "AC_AI_Summary"
+df$treatment_condition[df$study_condition == "firearm_control"] = "Control"
+
+
+# Check the treatment condition distribution
+table(df$treatment_condition, useNA = "ifany")
+
+# Create topic column based on study_condition
+df$topic = NA
+df$topic[grepl("abortion", df$study_condition)] = "Abortion"
+df$topic[grepl("vaccine", df$study_condition)] = "Vaccine Mandates"
+df$topic[grepl("uh", df$study_condition)] = "Universal Healthcare"
+df$topic[grepl("firearm", df$study_condition)] = "Firearm Regulations"
+
+# Set treatment_condition as factor with Control as reference level
+df$treatment_condition = factor(df$treatment_condition, levels = c("Control", "AC_AI_Summary", "AIC_AI_Summary"))
+
+```
+
+```{r}
+
+# Convert click columns to numeric first
+click_cols = c("abortion_pro_1_clicked", "abortion_pro_2_clicked", "abortion_pro_3_clicked", "abortion_pro_4_clicked", "abortion_pro_5_clicked",
+               "abortion_con_1_clicked", "abortion_con_2_clicked", "abortion_con_3_clicked", "abortion_con_4_clicked", "abortion_con_5_clicked",
+               "vaccine_pro_1_clicked", "vaccine_pro_2_clicked", "vaccine_pro_3_clicked", "vaccine_pro_4_clicked", "vaccine_pro_5_clicked",
+               "vaccine_con_1_clicked", "vaccine_con_2_clicked", "vaccine_con_3_clicked", "vaccine_con_4_clicked", "vaccine_con_5_clicked",
+               "unihealthcare_pro_1_clicked", "unihealthcare_pro_2_clicked", "unihealthcare_pro_3_clicked", "unihealthcare_pro_4_clicked", "unihealthcare_pro_5_clicked",
+               "unihealthcare_con_1_clicked", "unihealthcare_con_2_clicked", "unihealthcare_con_3_clicked", "unihealthcare_con_4_clicked", "unihealthcare_con_5_clicked",
+               "gun_pro_1_clicked", "gun_pro_2_clicked", "gun_pro_3_clicked", "gun_pro_4_clicked", "gun_pro_5_clicked",
+               "gun_con_1_clicked", "gun_con_2_clicked", "gun_con_3_clicked", "gun_con_4_clicked", "gun_con_5_clicked")
+
+df[click_cols] = lapply(df[click_cols], as.numeric)
+
+# Create columns for counting pro and con clicks for each topic
+# Abortion clicks
+df$abortion_pro_clicks = rowSums(df[, c("abortion_pro_1_clicked", "abortion_pro_2_clicked", 
+                                        "abortion_pro_3_clicked", "abortion_pro_4_clicked", 
+                                        "abortion_pro_5_clicked")], na.rm = TRUE)
+df$abortion_con_clicks = rowSums(df[, c("abortion_con_1_clicked", "abortion_con_2_clicked", 
+                                        "abortion_con_3_clicked", "abortion_con_4_clicked", 
+                                        "abortion_con_5_clicked")], na.rm = TRUE)
+
+# Vaccine clicks
+df$vaccine_pro_clicks = rowSums(df[, c("vaccine_pro_1_clicked", "vaccine_pro_2_clicked", 
+                                       "vaccine_pro_3_clicked", "vaccine_pro_4_clicked", 
+                                       "vaccine_pro_5_clicked")], na.rm = TRUE)
+df$vaccine_con_clicks = rowSums(df[, c("vaccine_con_1_clicked", "vaccine_con_2_clicked", 
+                                       "vaccine_con_3_clicked", "vaccine_con_4_clicked", 
+                                       "vaccine_con_5_clicked")], na.rm = TRUE)
+
+# Universal Healthcare clicks
+df$uh_pro_clicks = rowSums(df[, c("unihealthcare_pro_1_clicked", "unihealthcare_pro_2_clicked", 
+                                  "unihealthcare_pro_3_clicked", "unihealthcare_pro_4_clicked", 
+                                  "unihealthcare_pro_5_clicked")], na.rm = TRUE)
+df$uh_con_clicks = rowSums(df[, c("unihealthcare_con_1_clicked", "unihealthcare_con_2_clicked", 
+                                  "unihealthcare_con_3_clicked", "unihealthcare_con_4_clicked", 
+                                  "unihealthcare_con_5_clicked")], na.rm = TRUE)
+
+# Firearm clicks
+df$firearm_pro_clicks = rowSums(df[, c("gun_pro_1_clicked", "gun_pro_2_clicked", 
+                                       "gun_pro_3_clicked", "gun_pro_4_clicked", 
+                                       "gun_pro_5_clicked")], na.rm = TRUE)
+df$firearm_con_clicks = rowSums(df[, c("gun_con_1_clicked", "gun_con_2_clicked", 
+                                       "gun_con_3_clicked", "gun_con_4_clicked", 
+                                       "gun_con_5_clicked")], na.rm = TRUE)
+
+
+```
+
+```{r}
+
+# Create total clicks column based on topic for each row
+df$total_clicks = ifelse(df$topic == "Abortion", df$abortion_pro_clicks + df$abortion_con_clicks,
+                ifelse(df$topic == "Vaccine Mandates", df$vaccine_pro_clicks + df$vaccine_con_clicks,
+                ifelse(df$topic == "Universal Healthcare", df$uh_pro_clicks + df$uh_con_clicks,
+                ifelse(df$topic == "Firearm Regulations", df$firearm_pro_clicks + df$firearm_con_clicks, NA))))
+
+
+```
+
+```{r}
+
+# Create ac_links column (attitude-congruent links) based on topic and attitude binary
+df$ac_links = ifelse(df$topic == "Abortion" & df$abortion_att_binary == 1, df$abortion_pro_clicks,
+            ifelse(df$topic == "Abortion" & df$abortion_att_binary == 2, df$abortion_con_clicks,
+            ifelse(df$topic == "Vaccine Mandates" & df$vaccine_att_binary == 1, df$vaccine_pro_clicks,
+            ifelse(df$topic == "Vaccine Mandates" & df$vaccine_att_binary == 2, df$vaccine_con_clicks,
+            ifelse(df$topic == "Universal Healthcare" & df$uh_att_binary == 1, df$uh_pro_clicks,
+            ifelse(df$topic == "Universal Healthcare" & df$uh_att_binary == 2, df$uh_con_clicks,
+            ifelse(df$topic == "Firearm Regulations" & df$firearm_att_binary == 1, df$firearm_pro_clicks,
+            ifelse(df$topic == "Firearm Regulations" & df$firearm_att_binary == 2, df$firearm_con_clicks, NA))))))))
+
+# Check the ac_links distribution
+summary(df$ac_links)
+
+# Check ac_links by topic
+tapply(df$ac_links, df$topic, summary)
+
+# Create aic_links column (attitude-incongruent links) based on topic and attitude binary
+df$aic_links = ifelse(df$topic == "Abortion" & df$abortion_att_binary == 1, df$abortion_con_clicks,
+            ifelse(df$topic == "Abortion" & df$abortion_att_binary == 2, df$abortion_pro_clicks,
+            ifelse(df$topic == "Vaccine Mandates" & df$vaccine_att_binary == 1, df$vaccine_con_clicks,
+            ifelse(df$topic == "Vaccine Mandates" & df$vaccine_att_binary == 2, df$vaccine_pro_clicks,
+            ifelse(df$topic == "Universal Healthcare" & df$uh_att_binary == 1, df$uh_con_clicks,
+            ifelse(df$topic == "Universal Healthcare" & df$uh_att_binary == 2, df$uh_pro_clicks,
+            ifelse(df$topic == "Firearm Regulations" & df$firearm_att_binary == 1, df$firearm_con_clicks,
+            ifelse(df$topic == "Firearm Regulations" & df$firearm_att_binary == 2, df$firearm_pro_clicks, NA))))))))
+
+
+```
+
+```{r}
+
+# Convert certainty and importance columns to numeric first
+strength_cols = c("abortion_certain", "abortion_imp", "vaccine_certain", "vaccine_imp", 
+                  "uh_certain", "uh_imp", "firearm_certain", "firearm_imp")
+df[strength_cols] = lapply(df[strength_cols], as.numeric)
+
+# Create attitude_strength column based on topic (average of certainty and importance)
+df$attitude_strength = ifelse(df$topic == "Abortion", (df$abortion_certain + df$abortion_imp) / 2,
+                     ifelse(df$topic == "Vaccine Mandates", (df$vaccine_certain + df$vaccine_imp) / 2,
+                     ifelse(df$topic == "Universal Healthcare", (df$uh_certain + df$uh_imp) / 2,
+                     ifelse(df$topic == "Firearm Regulations", (df$firearm_certain + df$firearm_imp) / 2, NA))))
+
+
+```
+
+```{r}
+
+# Convert partisanship to numeric and create partisanship_strength column
+df$partisanship = as.numeric(df$partisanship)
+df$partisanship_strength = abs(df$partisanship - 4)
+
+```
+
+```{r}
+
+df$attitude_polarization <- ifelse(
+  df$topic == "Abortion" & df$abortion_att_binary == 1, df$abortion_att_post - df$abortion_att_pre,
+  ifelse(df$topic == "Abortion" & df$abortion_att_binary == 2, df$abortion_att_pre - df$abortion_att_post,
+  ifelse(df$topic == "Vaccine Mandates" & df$vaccine_att_binary == 1, df$vaccine_att_post - df$vaccine_att_pre,
+  ifelse(df$topic == "Vaccine Mandates" & df$vaccine_att_binary == 2, df$vaccine_att_pre - df$vaccine_att_post,
+  ifelse(df$topic == "Universal Healthcare" & df$uh_att_binary == 1, df$uh_att_post - df$uh_att_pre,
+  ifelse(df$topic == "Universal Healthcare" & df$uh_att_binary == 2, df$uh_att_pre - df$uh_att_post,
+  ifelse(df$topic == "Firearm Regulations" & df$firearm_att_binary == 1, df$firearm_att_post - df$firearm_att_pre,
+  ifelse(df$topic == "Firearm Regulations" & df$firearm_att_binary == 2, df$firearm_att_pre - df$firearm_att_post, NA_real_)
+  )))))))
+
+```
+
+```{r}
+
+df$attitude_post <- ifelse(
+  df$topic == "Abortion" & df$abortion_att_binary == 1, df$abortion_att_post,
+  ifelse(df$topic == "Abortion" & df$abortion_att_binary == 2, 7 - df$abortion_att_post,
+  ifelse(df$topic == "Vaccine Mandates" & df$vaccine_att_binary == 1, df$vaccine_att_post,
+  ifelse(df$topic == "Vaccine Mandates" & df$vaccine_att_binary == 2, 7 - df$vaccine_att_post,
+  ifelse(df$topic == "Universal Healthcare" & df$uh_att_binary == 1, df$uh_att_post,
+  ifelse(df$topic == "Universal Healthcare" & df$uh_att_binary == 2, 7 - df$uh_att_post,
+  ifelse(df$topic == "Firearm Regulations" & df$firearm_att_binary == 1, df$firearm_att_post,
+  ifelse(df$topic == "Firearm Regulations" & df$firearm_att_binary == 2, 7 - df$firearm_att_post, NA_real_)
+  )))))))
+
+```
+
+```{r}
+
+library(dplyr)
+library(rlang)
+
+# 1) Identify columns dynamically
+first_cols <- grep("_First\\.Click$", names(df), value = TRUE)
+last_cols  <- grep("_Last\\.Click$",  names(df), value = TRUE)
+
+# 2–4) Clean + compute
+df <- df %>%
+  mutate(
+    across(all_of(first_cols), ~na_if(., "")),        # "" -> NA
+    across(all_of(last_cols),  ~na_if(., "")),
+    across(all_of(first_cols), ~type.convert(., as.is = TRUE)),
+    across(all_of(last_cols),  ~type.convert(., as.is = TRUE)),
+    first_click = coalesce(!!!syms(first_cols)),
+    last_click  = coalesce(!!!syms(last_cols)),
+  )
+
+
+```
+
+
+# Analysis
+
+## Search Result Engagement
+
+
+```{r}
+
+# Distribution analysis for total_clicks to determine Poisson vs Negative Binomial
+
+# Basic summary statistics
+summary(df$total_clicks)
+
+# Check for zeros and variance
+cat("Number of zeros:", sum(df$total_clicks == 0, na.rm = TRUE), "\n")
+cat("Mean:", mean(df$total_clicks, na.rm = TRUE), "\n")
+cat("Variance:", var(df$total_clicks, na.rm = TRUE), "\n")
+cat("Variance/Mean ratio:", var(df$total_clicks, na.rm = TRUE) / mean(df$total_clicks, na.rm = TRUE), "\n")
+
+# Histogram of total_clicks
+hist(df$total_clicks, main = "Distribution of Total Clicks", xlab = "Total Clicks", breaks = 20)
+
+# Test for overdispersion using a simple Poisson model
+library(MASS)
+
+# Fit a basic Poisson model
+poisson_model = glm(total_clicks ~ treatment_condition, data = df, family = poisson)
+
+# Calculate dispersion parameter
+dispersion = sum(residuals(poisson_model, type = "pearson")^2) / poisson_model$df.residual
+cat("Dispersion parameter:", dispersion, "\n")
+
+# If dispersion > 1.5, consider negative binomial
+if(dispersion > 1.5) {
+  cat("Overdispersion detected. Consider using negative binomial regression.\n")
+} else {
+  cat("No significant overdispersion. Poisson regression may be appropriate.\n")
+}
+
+# Compare with negative binomial model
+nb_model = glm.nb(total_clicks ~ treatment_condition, data = df)
+
+# AIC comparison
+cat("Poisson AIC:", AIC(poisson_model), "\n")
+cat("Negative Binomial AIC:", AIC(nb_model), "\n")
+
+```
+
+```{r}
+
+# Negative Binomial Regression Analysis for Total Clicks
+# Testing differences across treatment conditions with covariates
+
+# Load required packages
+library(MASS)
+library(jtools)
+
+# Fit negative binomial regression model
+nb_model_full = glm.nb(total_clicks ~ relevel(treatment_condition, ref = "Control") + topic + attitude_strength + partisanship_strength, data = df)
+
+# # Model summary
+cat("Negative Binomial Regression Results:\n")
+cat("=====================================\n")
+print(summary(nb_model_full))
+
+```
+
+```{r}
+
+# Calculate Incidence Rate Ratios (IRRs)
+
+cat("\nIncidence Rate Ratios (IRR):\n")
+cat("=============================\n")
+irr = exp(coef(nb_model_full))
+irr_ci = exp(confint(nb_model_full))
+irr_table = data.frame(IRR = round(irr, 3), CI_Lower = round(irr_ci[,1], 3), CI_Upper = round(irr_ci[,2], 3),
+p_value = round(summary(nb_model_full)$coefficients[,4], 4))
+print(irr_table)
+
+```
+
+```{r}
+
+# AC_AI_Summary vs AIC_AI_Summary
+nb_model_ai_summary = glm.nb(total_clicks ~ relevel(treatment_condition, ref = "AC_AI_Summary") + topic + attitude_strength + partisanship_strength, data = df)
+
+# Model summary
+cat("Negative Binomial Regression Results:\n")
+cat("=====================================\n")
+print(summary(nb_model_ai_summary))
+
+```
+
+```{r}
+
+# Calculate Incidence Rate Ratios (IRRs)
+cat("\nIncidence Rate Ratios (IRR):\n")
+cat("=============================\n")
+irr = exp(coef(nb_model_ai_summary))
+irr_ci = exp(confint(nb_model_ai_summary))
+irr_table = data.frame(
+  IRR = round(irr, 3),
+  CI_Lower = round(irr_ci[,1], 3),
+  CI_Upper = round(irr_ci[,2], 3),
+  p_value = round(summary(nb_model_full)$coefficients[,4], 4)
+)
+print(irr_table)
+
+```
+
+```{r}
+
+# Load required packages
+library(MASS)
+library(jtools)
+
+df$treatment_condition = relevel(factor(df$treatment_condition), ref = "Control")
+
+# Fit negative binomial regression model
+nb_model_interaction = glm.nb(total_clicks ~ treatment_condition*topic + attitude_strength + partisanship_strength, data = df)
+
+# # Model summary
+cat("Negative Binomial Regression Results:\n")
+cat("=====================================\n")
+print(summary(nb_model_interaction))
+
+# Test the interaction effect
+library(car)
+interaction_test = Anova(nb_model_interaction, type = 3)
+cat("\nType III ANOVA for Interaction Effect:\n")
+cat("======================================\n")
+print(interaction_test)
+
+```
+
+# Percieved AI Summary Bias
+
+```{r}
+
+# ANOVA for perceived AI bias
+# Testing perceived bias between AIC Summary vs AC Summary only
+
+# Filter data to only include AI summary conditions (exclude Control)
+df_ai_sum = df[df$treatment_condition %in% c("AC_AI_Summary", "AIC_AI_Summary", "Balanced_AI_Summary"), ]
+
+# Fit ANOVA model
+ai_bias_model = aov(perc_ai_bias ~ treatment_condition + topic  + attitude_strength + partisanship_strength, data = df_ai_sum)
+
+# Model summary
+cat("\nANOVA Results for Perceived AI Bias:\n")
+cat("====================================\n")
+print(summary(ai_bias_model))
+
+```
+
+```{r}
+
+eta_squared(ai_bias_model, partial = TRUE, ci = 0.95)
+
+```
+
+```{r}
+
+# Cohen's d for two groups
+emm <- emmeans(ai_bias_model, ~ treatment_condition)
+eff_size(emm, sigma = sigma(ai_bias_model), edf = df.residual(ai_bias_model))
+
+```
+
+```{r}
+
+library(multcomp)
+
+
+ph <- glht(ai_bias_model, linfct = mcp(treatment_condition = "Tukey"))
+summary(ph)          # estimate, SE, z, adjusted p (single-step)
+confint(ph)          # adjusted CI
+
+```
+
+```{r}
+
+ai_bias_interaction = aov(perc_ai_bias ~ treatment_condition*topic + attitude_strength + partisanship_strength, data = df_ai_sum)
+
+library(car)
+interaction_test = Anova(ai_bias_interaction, type = 3)
+cat("\nType III ANOVA for Interaction Effect:\n")
+cat("======================================\n")
+print(interaction_test)
+
+```
+
+
+# Perceived AI Summary Strength
+
+```{r}
+
+# ANOVA for perceived AI summary strength
+
+# Fit ANOVA model
+ai_strength_model = aov(perc_ai_strength ~ treatment_condition + topic  + attitude_strength  + partisanship_strength, data = df_ai_sum)
+
+# Model summary
+cat("\nANOVA Results for Perceived AI Summary Strength (H4):\n")
+cat("=====================================================\n")
+print(summary(ai_strength_model))
+
+```
+
+```{r}
+
+eta_squared(ai_strength_model, partial = TRUE, ci = 0.95)
+
+```
+
+```{r}
+
+library(effectsize)
+
+# Cohen's d for two groups
+emm <- emmeans(ai_strength_model, ~ treatment_condition)
+eff_size(emm, sigma = sigma(ai_strength_model), edf = df.residual(ai_strength_model))
+```
+
+```{r}
+
+library(multcomp)
+
+ph <- glht(ai_strength_model, linfct = mcp(treatment_condition = "Tukey"))
+summary(ph)          # estimate, SE, z, adjusted p (single-step)
+
+```
+
+
+```{r}
+
+ai_strength_interaction = aov(perc_ai_strength ~ treatment_condition*topic + attitude_strength + partisanship_strength, data = df_ai_sum)
+
+library(car)
+interaction_test = Anova(ai_strength_interaction, type = 3)
+cat("\nType III ANOVA for Interaction Effect:\n")
+cat("======================================\n")
+print(interaction_test)
+
+```
+
+# Attitude Polarization
+
+```{r}
+
+# ANCOVA for attitude polarization
+# Testing all 3 conditions: Control, AC_AI_Summary, AIC_AI_Summary
+
+# Fit ANCOVA model
+attitude_polarization_model = aov(attitude_polarization ~ treatment_condition + topic + attitude_strength + partisanship_strength, data = df)
+
+# Model summary
+cat("\nANCOVA Results for Attitude Polarization:\n")
+cat("=========================================\n")
+print(summary(attitude_polarization_model))
+
+# Post-hoc pairwise comparisons
+library(emmeans)
+marginal_means = emmeans(attitude_polarization_model, ~ treatment_condition)
+cat("\nMarginal Means by Treatment Condition:\n")
+cat("=====================================\n")
+print(marginal_means)
+
+pairwise_comparisons = pairs(marginal_means, adjust = "tukey")
+cat("\nPairwise Comparisons (Tukey's HSD test):\n")
+cat("========================================\n")
+print(pairwise_comparisons)
+
+
+```
+
+
+```{r}
+
+eff_size(marginal_means, sigma = sigma(attitude_polarization_model), edf = df.residual(attitude_polarization_model))
+
+
+```
+
+```{r}
+
+eta_squared(attitude_polarization_model, partial = TRUE, ci = 0.95)
+
+```
+
+```{r}
+
+emm <- emmeans(attitude_polarization_model,~ treatment_condition)
+planned_contrasts <- contrast(emm, method = list(
+"AIC - Control" = c(-1, 0, 1), # adjust order/signs to match your factor levels
+"AC - Control" = c(-1, 1, 0),
+"AIC - AC" = c(0, 1,-1)
+), adjust = "none")
+planned_contrasts
+
+```
+
+```{r}
+
+attitude_polarization_interaction = aov(attitude_polarization ~ treatment_condition*topic + attitude_strength + partisanship_strength, data = df)
+
+library(car)
+interaction_test = Anova(attitude_polarization_interaction, type = 3)
+cat("\nType III ANOVA for Interaction Effect:\n")
+cat("======================================\n")
+print(interaction_test)
+
+```
+
+
+# Exploratory Analysis
+
+
+```{r}
+
+# Filter data to only include AI summary conditions (exclude Control)
+df_ai_sum = df[df$treatment_condition %in% c("AC_AI_Summary", "AIC_AI_Summary", "Balanced_AI_Summary"), ]
+df_ai_sum$perc_useful = as.numeric(as.character(df_ai_sum$perc_useful))
+
+# Fit ANOVA model
+ai_useful_model = aov(perc_useful ~ treatment_condition + topic + attitude_strength + partisanship_strength, data = df_ai_sum)
+
+# Model summary
+cat("\nANOVA Results for Perceived AI Summary Useful:\n")
+cat("=====================================================\n")
+print(summary(ai_useful_model))
+
+```
+
+```{r}
+
+emm <- emmeans(ai_useful_model, ~ treatment_condition)
+eff_size(emm, sigma = sigma(ai_useful_model), edf = df.residual(ai_useful_model))
+
+```
+
+```{r}
+
+pairs(emm, adjust = "tukey")
+confint(pairs(emm, adjust = "tukey"))
+
+```
+
+
+```{r}
+
+# Filter data to only include AI summary conditions (exclude Control)
+df_ai_sum = df[df$treatment_condition %in% c("AC_AI_Summary", "AIC_AI_Summary", "Balanced_AI_Summary"), ]
+df_ai_sum$perc_satisfaction = as.numeric(as.character(df_ai_sum$perc_satisfaction))
+
+
+# Fit ANOVA model
+ai_satisfaction_model = aov(perc_satisfaction ~ treatment_condition + topic + attitude_strength + partisanship_strength, data = df_ai_sum)
+
+# Model summary
+cat("\nANOVA Results for Perceived AI Summary Strength (H4):\n")
+cat("=====================================================\n")
+print(summary(ai_satisfaction_model))
+
+```
+
+```{r}
+
+emm <- emmeans(ai_satisfaction_model, ~ treatment_condition)
+eff_size(emm, sigma = sigma(ai_useful_model), edf = df.residual(ai_satisfaction_model))
+
+```
+
+```{r}
+
+pairs(emm, adjust = "tukey")
+confint(pairs(emm, adjust = "tukey"))
+
+```
+
+```{r}
+
+write.csv(df, "study_data_final_cleaned.csv", row.names = FALSE)
+
+```
+
+# Demographics Table
+
+```{r}
+head(df)
+```
+
+```{r}
+
+library(dplyr)
+library(tidyr)
+library(stringr)
+
+# --- code → label maps (edit if your codes differ) ---
+gender_map <- c(
+  "1" = "Male",
+  "2" = "Female",
+  "3" = "Non-binary / third gender",
+  "4" = "Prefer to self-describe",
+  "5" = "Prefer not to say"
+)
+
+education_map <- c(
+  "1" = "Some high school or less",
+  "2" = "High school diploma or GED",
+  "3" = "Some college, but no degree",
+  "4" = "Associates or technical degree",
+  "5" = "Bachelor's degree",
+  "6" = "Graduate or professional degree (MA, MS, MBA, PhD, JD, MD, DDS etc.)",
+  "7" = "Prefer not to say"
+)
+
+race_map <- c(
+  "1" = "White or Caucasian",
+  "2" = "Black or African American",
+  "3" = "American Indian/Native American or Alaska Native",
+  "4" = "Asian",
+  "5" = "Native Hawaiian or Other Pacific Islander",
+  "6" = "Other",
+  "7" = "Prefer not to say"
+)
+
+# ---------- CLEAN + MAP ----------
+df_lab <- df %>%
+  mutate(
+    age = suppressWarnings(as.numeric(age)),
+    gender    = ifelse(is.na(gender_map[as.character(gender)]),    "Uncoded", gender_map[as.character(gender)]),
+    education = ifelse(is.na(education_map[as.character(education)]), "Uncoded", education_map[as.character(education)]),
+    race      = ifelse(is.na(race_map[as.character(race)]),        "Uncoded", race_map[as.character(race)])
+  )
+
+N <- nrow(df_lab)
+
+# ---------- AGE ROW ----------
+age_row <- df_lab %>%
+  summarize(
+    mean = mean(age, na.rm = TRUE),
+    sd   = sd(age, na.rm = TRUE),
+    min  = min(age, na.rm = TRUE),
+    max  = max(age, na.rm = TRUE)
+  ) %>%
+  mutate(`n (%) or summary` = sprintf("%.1f ± %.1f (range %.1f–%.1f)", mean, sd, min, max)) %>%
+  transmute(Characteristic = "Age", `n (%) or summary`)
+
+# ---------- HELPER FOR SINGLE-CHOICE COUNTS ----------
+count_block <- function(data, var, levels, header) {
+  lev_tbl <- tibble(val = levels)
+  bind_rows(
+    tibble(Characteristic = header, `n (%) or summary` = ""),
+    data %>%
+      count(val = .data[[var]], name = "n") %>%
+      mutate(val = as.character(val)) %>%
+      right_join(lev_tbl, by = "val") %>%
+      mutate(n = ifelse(is.na(n), 0L, n),
+             pct = 100 * n / N,
+             `n (%) or summary` = sprintf("%d (%.1f%%)", n, pct)) %>%
+      transmute(Characteristic = val, `n (%) or summary`)
+  )
+}
+
+gender_levels    <- unname(gender_map)
+education_levels <- unname(education_map)
+race_levels      <- unname(race_map)
+
+tbl_one <- bind_rows(
+  age_row,
+  count_block(df_lab, "gender",    gender_levels,    "Gender"),
+  count_block(df_lab, "education", education_levels, "Education"),
+  count_block(df_lab, "race",      race_levels,      "Race")
+)
+
+# View the single table:
+tbl_one
+```
+
+
