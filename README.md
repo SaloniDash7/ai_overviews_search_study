@@ -11,9 +11,7 @@ Materials, data, and analysis code for the paper *"AI Overviews Reduce Engagemen
 
 ## Note
 
-The files in `data/` have been de-identified for sharing. Because of this, the initial data-loading step at the top of each notebook cannot be re-run as-is.
-
-All statistical models and results reported in the manuscript (from the "Analysis" section of each notebook onward) can be reproduced directly against the provided de-identified CSVs.
+The files in `data/` have been de-identified for sharing. Because of this, the initial data-loading step at the top of each notebook cannot be re-run as-is. All statistical models and results reported in the manuscript (from the "Analysis" section of each notebook onward) can be reproduced directly against the provided de-identified CSVs.
 
 ## Citation
 
